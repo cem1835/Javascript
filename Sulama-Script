@@ -1,0 +1,728 @@
+<script>
+    // graphs
+
+    class FieldGraphs {
+
+        constructor() {
+            this.MevcutEkimIhtiyac = null;
+            this.ToplamSulama = null;
+            this.GecmisYagis = null;
+            this.TarlaMeteorolojik = null;
+            this.Details = null;
+            this.fenolojikEvre = null;
+            this.sulama = null;
+
+            this.tarlaId = '@Model.vwPA_Tarlalarim.id';
+            this.istasyonId = '@Model.vwPA_Tarlalarim.IstasyonId';
+            this.tarlaBoyut = '@Model.vwPA_Tarlalarim.AgricultureParcelSize';
+            this.CityId = '@Model.vwPA_Tarlalarim.CityId';
+
+
+            Highcharts.setOptions({
+                lang: {
+                    shortMonths: ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'],
+                    months: ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'],
+                    weekdays: ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'],
+                    downloadJPEG: 'JPEG Olarak Kaydet',
+                    downloadPNG: 'PNG Olarak Kaydet',
+                    downloadSVG: 'SVG Olarak Kaydet',
+                    downloadPDF: 'PDF Olarak Kaydet',
+                    printChart: 'Yazdır',
+                    resetZoom: 'Zoom Kapat',
+                }
+            });
+        }
+
+        // PAGE FUNCS
+
+        Runner() {
+            GetJsonDataFromUrl('/DecisionSupport/_TarlaSulama/GetTarlaMevcutEkim', { tarlaId: this.tarlaId }, response=> {
+
+                if (!response.result)
+                    return;
+
+                this.fenolojikEvre = response.objects.sort((a, b) => parseInt(a.FenelojikEvreSirasi) - parseInt(b.FenelojikEvreSirasi));
+
+                GetJsonDataFromUrl('/DecisionSupport/_TarlaSulama/GetTarlaToplamSulama',
+                    { tarlaId: this.tarlaId, IstasyonId: this.istasyonId, IlkFaaliyet: this.fenolojikEvre[0].TahminiBaslangic }, response => {
+
+                        this.sulama = response.toplamSulama;
+                        this.TarlaMeteorolojik = response.meteorolojik;
+                        this.GecmisYagis = response.gecmisYagis;
+
+                        graph.LoadSeries();
+                        this.Details = graph.LoadDetails();
+
+
+                        graph.LoadRainGraphSeries();
+                        graph.LoadRainDetails();
+                        graph.LoadWaterTank();
+
+                        // garbage collector
+                        //this.fenolojikEvre = null, this.sulama = null; this.Details = null;
+                    });
+            });
+        }
+
+        LoadSeries() {
+
+            var flags = [], myPlotLines = [], myPlotArea = [], myPlotAreaOrange = [], myPlotAreaRed = [], wateringSeries = [];
+
+            var _st = new Date(this.fenolojikEvre[0].TahminiBaslangic).addHours(-192).getTime(); //          :(
+            var _et = new Date(this.fenolojikEvre[0].TahminiBitis).getTime();
+            var _si= this.fenolojikEvre[0].SulamaIhtiyaci;
+            myPlotArea.push([_st, _si * 0.5, _si * 1.5], [_et, _si * 0.5, _si * 1.5]);
+            myPlotAreaOrange.push([_st, 0, _si + _si * 1.25], [_et, 0, _si + _si * 1.25]);
+            myPlotAreaRed.push([_st, 0, _si + _si * 2], [_et, 0, _si + _si * 2])
+
+            for (var i = 1; i < this.fenolojikEvre.length; i++) {
+
+                var startDate = new Date(this.fenolojikEvre[i].TahminiBaslangic).getTime();
+                var endDate = new Date(this.fenolojikEvre[i].TahminiBitis).getTime();
+
+                var sulamaIhtiyaci = this.fenolojikEvre[i].SulamaIhtiyaci;
+                var altUstSinir = this.GetSubEdge(this.fenolojikEvre, i);
+
+                var mevcutTolerans = altUstSinir * 0.50;
+
+                var altSuIhtiyaci = this.fenolojikEvre.map(x=> x.SulamaIhtiyaci).slice(0, i).reduce((a, b) => a + b) + mevcutTolerans;
+                var mevcutSuIhtiyaci = altSuIhtiyaci + altUstSinir;
+
+                myPlotArea.push(
+                    [startDate, altSuIhtiyaci - altSuIhtiyaci * 0.08, mevcutSuIhtiyaci],
+                    [endDate, altSuIhtiyaci - altSuIhtiyaci * 0.08, mevcutSuIhtiyaci]);
+
+                myPlotAreaOrange.push(
+                    [startDate, altSuIhtiyaci - 3. * mevcutTolerans, mevcutSuIhtiyaci + 2 * mevcutTolerans],
+                    [endDate, altSuIhtiyaci - 3 * mevcutTolerans, mevcutSuIhtiyaci + 2 * mevcutTolerans]);
+
+                myPlotAreaRed.push(
+                    [startDate, altSuIhtiyaci - 6 * mevcutTolerans, mevcutSuIhtiyaci + 4 * mevcutTolerans],
+                    [endDate, altSuIhtiyaci - 6 * mevcutTolerans, mevcutSuIhtiyaci + 4 * mevcutTolerans]);
+
+                myPlotLines.push(
+                    {
+                        color: '#acbacc',
+                        dashStyle: 'dot',
+                        width: 2,
+                        value: new Date(this.fenolojikEvre[i].TahminiBitis).getTime(),
+                        label: {
+                            text: this.fenolojikEvre[i].FenelojikEvre_Title.replace(new RegExp("[0-9] \-", "g"), "").trim(),
+                            align: 'right', verticalAlign: 'top', style: { fontSize: "13px" },
+                            rotation: -30,
+                            x: -10
+                        },
+                        zIndex: 6
+                    });
+            }
+
+            graph.GroupBy(this.sulama, item => item.faaliyetBaslangic.substring(0, item.faaliyetBaslangic.indexOf('T'))).forEach((items, i) => {
+                var tarih = new Date(items[0].faaliyetBaslangic).getTime();
+                var sumOfSpentWater = this.sulama.map(x=> tarih >= new Date(x.faaliyetBaslangic).getTime() ? x : -1)
+                        .filter(x=> x != -1).map(x=> x.toplamSulama).reduce((a, b) => a + b);
+
+                wateringSeries.push({ x: tarih, y: sumOfSpentWater, extra: items })
+            });
+
+            graph.LoadSpentWaterChart(myPlotLines, myPlotArea, myPlotAreaOrange, myPlotAreaRed, wateringSeries); // load
+        }
+        LoadSpentWaterChart(myPlotLines, myPlotArea, myPlotAreaOrange, myPlotAreaRed, wateringSeries) {
+            Highcharts.chart('spentWater', {
+                chart: {
+                    height: 422
+                },
+                credits: {
+                    enabled: false
+                },
+                title: {
+                    text: null
+                },
+                xAxis: {
+                    gridLineWidth: 1,
+                    type: 'datetime',
+                    plotLines: myPlotLines
+                },
+                yAxis: {
+                    min: 0,
+                    title: {
+                        text: null
+                    },
+                    labels: {
+                        formatter: function () {
+                            return this.value.toLocaleString() + " mm";
+                        }
+                    }
+                },
+                tooltip: {
+                    borderColor: "#fff",
+                    formatter: function () {
+
+                        var tooltipHTML = '<strong style="font-size:12px"> ' + Highcharts.dateFormat('%e %B %Y %A', this.x) + ' </strong><br/><br/>';
+                        tooltipHTML += '<span style="color:' + this.point.color + '">\u25CF</span> Bitkinin Aldığı Su :  <b> ' + Highcharts.numberFormat(this.point.y, 2) + ' mm </b>' + '<br/>';
+
+                        graph.GroupBy(this.point.extra, item => item.type).forEach((items, i) => {
+
+                            var _toplamSulama = items.map(x=> x.toplamSulama).reduce((a, b) => a + b);
+
+                            tooltipHTML += ' <span>\u25CF</span>' + items[0].type + ' : ' + '<b>' + Highcharts.numberFormat(Math.abs(_toplamSulama), 1) + ' mm  </b>' + '<br/>';
+                        });
+                        return tooltipHTML;
+                    },
+                },
+                legend: {
+                    backgroundColor: '#FFFFFF',
+                    layout: 'vertical',
+                    floating: true,
+                    align: 'right',
+                    verticalAlign: 'bottom',
+                    x: -40,
+                    y: -60,
+                    shadow: true
+                },
+                series: [
+                {
+                    name: "Sulama Çok Kötü Seviyede",
+                    data: myPlotAreaRed,
+                    type: "arearange",
+                    linewidth: 0,
+                    linkedTo: ':previous',
+                    color: "#ff6a41",
+                    fillOpacity: 0.4,
+                    lineColor: "#fff",
+                    showInLegend: true,
+                    enableMouseTracking: false,
+                    zIndex: 0,
+                    marker: {
+                        enabled: false
+                    }
+                },
+                  {
+                      name: "Sulama Kötü Seviyede ",
+                      data: myPlotAreaOrange,
+                      type: "arearange",
+                      linewidth: 0,
+                      linkedTo: ':previous',
+                      color: "#fff1b5",
+                      fillOpacity: 0.8,
+                      //lineColor: "#fff",
+                      showInLegend: true,
+                      enableMouseTracking: false,
+                      zIndex: 1,
+                      marker: {
+                          enabled: false
+                      }
+                  },
+                   {
+                       name: "Sulama İyi Seviyede ",
+                       data: myPlotArea,
+                       type: "arearange",
+                       linewidth: 0,
+                       linkedTo: ':previous',
+                       color: "#3fb206",
+                       fillOpacity: 0.4,
+                       //lineColor: "#fff",
+                       enableMouseTracking: false,
+                       showInLegend: true,
+                       zIndex: 2,
+                       marker: {
+                           enabled: false
+                       }
+                   },
+                {
+                    name: 'Bitkinin Aldığı Su',
+                    type: 'line',
+                    data: wateringSeries,
+                    zIndex: 5,
+                    lineWidth: 4
+                }
+                ]
+            });
+        }
+
+        LoadDetails() {
+
+            var Details = { // specification parameters
+                ToplamSuIhtiyaci: this.fenolojikEvre.map(x=> x.SulamaIhtiyaci).reduce((a, b) => a + b),
+                AlmasiGerekenSu: 0,
+                ToplamSulama: this.sulama.map(x=> x.type == "Otomatik Sulama" || x.type == "Manuel Sulama" ? x.toplamSulama : 0).reduce((a, b) => a + b),
+                MevcutSuIhtiyaci: 0,
+                
+                ToplamET0: this.sulama.map(x=> x.type == "ETC" ? x.toplamSulama * -1 : 0).reduce((a, b) => a + b),
+                ToplamYagis: this.sulama.map(x=> x.type == "Yağmur" ? x.toplamSulama : 0).reduce((a, b) => a + b),
+                HarcananSu: 0
+            };
+
+            this.fenolojikEvre.map(x=> new Date(x.TahminiBaslangic).getTime() <= new Date().getTime() ? x : -1).filter(x=> x != -1).forEach((item, i) => {
+                new Date(item.TahminiBitis).getTime() <= new Date().getTime()
+                ? Details.AlmasiGerekenSu += item.SulamaIhtiyaci
+                : Details.AlmasiGerekenSu += item.SulamaIhtiyaci *
+                       (graph.GetDateDiffDay(new Date(), new Date(item.TahminiBaslangic)) / graph.GetDateDiffDay(new Date(item.TahminiBaslangic), new Date(item.TahminiBitis)))
+            });
+
+            Details.MevcutSuIhtiyaci = Details.AlmasiGerekenSu - (Details.ToplamYagis + Details.ToplamSulama - Details.ToplamET0);
+     
+            Details.HarcananSu = (Details.ToplamSulama * parseFloat(this.tarlaBoyut)) / 1000;
+
+            for (var key in Details)
+                $('[data-id="' + key + '"]').html(Details[key].toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
+
+            return Details;
+        }
+
+        LoadRainGraphSeries() {
+
+            var series = [];
+
+            graph.GroupBy(this.sulama, x=>x.type).forEach((items, i) => {
+
+                var seriesData = [];
+                graph.GroupBy(items, item=> item.faaliyetBaslangic.substring(0, item.faaliyetBaslangic.indexOf('T'))).forEach((dailyGroup, index) => {
+                    seriesData.push(
+                        {
+                            x: new Date(dailyGroup[0].faaliyetBaslangic).getTime(),
+                            y: Math.abs(dailyGroup.map(x=>x.toplamSulama).reduce((a, b) => a + b)),
+                        });
+                });
+
+                series.push(
+                {
+                    name: items[0].type+" (mm)",
+                    type: 'line',
+                    data: seriesData.sort((a, b) => a.x - b.x),
+                    lineWidth: 2,
+                    zIndex: 3,
+                    visible: (items[0].type.indexOf("Yağmur") > -1 ? true : false),
+                    tooltip: {
+                        valueSuffix: ' mm',
+                        valueDecimals: 1,
+                    }
+                });
+            });
+
+            series.push
+                ({
+                    name: 'Geçmiş Yağmur İstatistiği (mm)',
+                    type: 'line',
+                    data: this.GecmisYagis.filter(x=> new Date() >= new Date(x.Tarih) && new Date(x.Tarih) >= new Date(this.fenolojikEvre[0].TahminiBaslangic)).map(dt=> { return { x: new Date(dt.Tarih).getTime(), y: dt.Yagis } }),
+                    lineWidth: 2,
+                    zIndex: 3,
+                    tooltip: {
+                        valueSuffix: ' mm',
+                        valueDecimals: 1,
+                    }
+                });
+
+            series.push({
+                type: 'windbarb',
+                vectorLength: 15,
+                name: 'Rüzgar Hızı (m/s) ',
+                color: Highcharts.getOptions().colors[1],
+                showInLegend: true,
+                //enableMouseTracking: true,
+                tooltip: {
+                    pointFormat: ' <span style="color:{point.color}" onload="console.log(point)">\u25CF</span>  {series.name} :  <b>{point.value:.1f} m/s </b><br/>',
+                },
+                zIndex: 3,
+                data: this.TarlaMeteorolojik.map(dt=> { return [new Date(dt.Tarih).getTime(), dt.RuzgarHiziMax, (dt.RuzgarYon * 24) % 360] })
+            });
+            series.push({
+                name: 'Hava Basıncı (mbar)',
+                type: 'column',
+                yAxis: 1,
+                color: 'rgba(241,92,128,0.1)',
+                data: this.TarlaMeteorolojik.map(dt => { return [new Date(dt.Tarih).getTime(), dt.HavaBasinc] }),
+                zIndex: 1,
+                tooltip: {
+                    valueSuffix: ' mb',
+                    valueDecimals: 1,
+                },
+                visible: false
+            });
+            series.push({
+                name: 'Toprak Nem (%)',
+                type: 'column',
+                yAxis: 2,
+                zIndex: 1,
+                color: 'rgba(228,211,84,0.3)',
+                data: this.TarlaMeteorolojik.map(dt => { return [new Date(dt.Tarih).getTime(), dt.NemToprak] }),
+                tooltip: {
+                    valuePrefix: ' % ',
+                    valueDecimals: 1,
+
+                },
+                visible: false,
+            });
+
+            graph.LoadRainGraph(series);
+        }
+        LoadRainGraph(series) {
+
+            Highcharts.chart('rainChart', {
+
+                chart: {
+                    height: 422
+                },
+                credits: {
+                    enabled: false
+                },
+                title: {
+                    text: null
+                },
+                xAxis: {
+                    gridLineWidth: 1,
+                    type: 'datetime',
+                },
+                tooltip: {
+                    shared: true,
+                    //pointFormat: ' <span style="color:{point.color}">\u25CF</span>  {series.name} :  <b>{point.y:.1f} mm </b><br/>',
+                },
+                legend: {
+                    shadow: true,
+                    backgroundColor: '#FFFFFF',
+                    layout: 'vertical',
+                    floating: true,
+                    align: 'right',
+                    verticalAlign: 'top',
+                    x: -160,
+                    y: 10,
+                },
+
+                yAxis: [{ // Primary yAxis
+                    min: -2.5,
+                    //max: 25,
+                    labels: {
+                        formatter: function () { return this.value.toLocaleString("tr-TR", { maximumFractionDigits: 1, minimumFractionDigits: 1 }) +" mm"},
+                        style: {
+                            color: Highcharts.getOptions().colors[3]
+                        }
+                    },
+                    title: {
+                        text: '',
+                        style: {
+                            color: Highcharts.getOptions().colors[3]
+                        }
+                    },
+                    opposite: true
+
+                }, { // Secondary yAxis
+                    gridLineWidth: 0,
+                    title: {
+                        text: null,
+                        style: {
+                            color: Highcharts.getOptions().colors[0]
+                        }
+                    },
+                    labels: {
+                        formatter: function () { return this.value.toLocaleString("tr-TR", { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + " mb" },
+                        style: {
+                            color: Highcharts.getOptions().colors[0]
+                        }
+                    }
+
+                }, { // Tertiary yAxis
+                    gridLineWidth: 0,
+                    title: {
+                        text: 'Toprak Nem',
+                        style: {
+                            color: Highcharts.getOptions().colors[1]
+                        }
+                    },
+                    labels: {
+                        format: '% {value}',
+                        style: {
+                            color: Highcharts.getOptions().colors[1]
+                        }
+                    },
+                    opposite: true
+                }],
+                series: series
+            });
+
+        }
+
+        LoadRainDetails() {
+
+            var toplamGecmisYagis = graph.GecmisYagis.filter(x=> new Date() >= new Date(x.Tarih) && new Date(x.Tarih) >= new Date(graph.fenolojikEvre[0].TahminiBaslangic)).map(x=> x.Yagis).reduce((a, b) => a + b);
+
+            var toplamMevcutYagis = this.sulama.map(x=> x.type == "Yağmur" ? x.toplamSulama : 0).reduce((a, b) => a + b);
+
+            Highcharts.chart('RainMeter', {
+                chart: {
+                    type: 'column',
+                    height:422
+                },
+                title: {
+                    text: null
+                },
+                xAxis: {
+                    categories: [
+                        ' ',
+                    ],
+                    gridLineWidth: 0,
+                    crosshair: true
+                },
+                labels: {
+                    enabled: false
+                },
+                yAxis: {
+                    min: 0,
+                    title: {
+                        text: null
+                    },
+                    labels: {
+                        enabled: false
+                    },
+                    gridLineWidth: 0,
+                },
+                legend: {
+                    enabled: false,
+                },
+                credits: {
+                    enabled: false
+                },
+                tooltip: {
+                    pointFormat: ' <span style="color:{point.color}">\u25CF</span>  {series.name} :  <b>{point.y:.1f} mm </b><br/>',
+                    shared: true,
+                },
+                plotOptions: {
+                    column: {
+                        pointPadding: 0.2,
+                        borderWidth: 0,
+                        grouping: false,
+                        shadow: true,
+                        //borderWidth: 0,
+                    }
+                },
+                annotations: [{
+                    labelOptions: {
+                        backgroundColor: 'rgba(0,0,0,0.5)',
+                        verticalAlign: 'top',
+                        y: -200,
+                        x: 35
+                    },
+                    labels: [{
+                        point: {
+                            xAxis: 0,
+                            yAxis: 0,
+                            x: 0,
+                            y: 0
+                        },
+                        text: 'Geçmiş Yıla Göre <br/> ' + (toplamGecmisYagis > toplamMevcutYagis ? 'Daha Kurak Bir ' : 'Daha Bol Yağışlı') + ' <br/>  Yıl Geçiyor'
+                    }]
+                },
+                {
+                    labelOptions: {
+                        backgroundColor: 'rgba(0,0,0,0.5)',
+                        verticalAlign: 'top',
+                        y: -75,
+                        x: 40
+                    },
+                    labels: [{
+                        point: {
+                            xAxis: 0,
+                            yAxis: 0,
+                            x: 0,
+                            y: 0
+                        },
+                        text: "Bu yıl  % " + Math.abs((100 - ((toplamMevcutYagis / toplamGecmisYagis) * 100))).toLocaleString("tr-TR", { maximumFractionDigits: 1 }) + (toplamMevcutYagis > toplamGecmisYagis ? " daha fazla" : " daha az ") + " <br/> yağış gerçekleşti"
+                    }]
+                }],
+                series: [ 
+                    { name: 'Geçmiş Yıllarda Ort. Yağış', data: [toplamGecmisYagis], yAxis: 0, pointPadding: 0.3, pointPlacement: -0.05 },
+                    { name: 'Bu Yıl Gerçekleşen  Yağış', data: [toplamMevcutYagis], yAxis: 0, pointPadding: 0.4, pointPlacement: -0.05 }
+                ]
+            });
+
+        }
+
+        LoadWaterTank() {
+            var thresholds = [];
+
+            var _totalSpentWaterCube = parseInt((graph.Details.ToplamSulama / 1000) * parseFloat(graph.tarlaBoyut));
+            graph.fenolojikEvre.forEach((item, i) => { 
+                
+                var start=new Date(item.TahminiBaslangic);
+                var end= new Date(item.TahminiBitis)
+                var now=new Date();
+
+                var _val=graph.fenolojikEvre.filter(x=> end.getTime() >= new Date(x.TahminiBitis).getTime() ).map(x=> x.SulamaIhtiyaci).reduce((a,b)=> a+b);
+
+                var _currentEvre = ( now.getTime() > start.getTime() && now.getTime()<end.getTime() ? true : false );
+                thresholds.push({
+                    name: item.FenelojikEvre_Title,
+                    value: ((_val / graph.Details.ToplamSuIhtiyaci) * 100) ,
+                    type: item.FenelojikEvre_Title,
+                    total:_val,
+                    alarm: _currentEvre,
+                    markerLength:100
+                });
+            });
+
+            let options = {
+                tankType: 'tower',
+                fillValue: ((graph.Details.ToplamSulama + graph.Details.ToplamYagis - graph.Details.ToplamET0) / graph.Details.ToplamSuIhtiyaci) * 100,
+                fillUnit: "%",
+                supportLabelPadding: 5,
+                frontFontColor: "#003B42",
+                thresholds: thresholds.reverseAll(),
+                lookupTableValue: _totalSpentWaterCube,
+                lookupTableValueUnit: 'metreküp sulama yapıldı',
+                lookupTableValueDecimal: 1,
+                changeRateValueDecimal: 1,
+                changeRateValueArrowEnabled: true,
+                changeRateValue: Math.abs(this.Details.MevcutSuIhtiyaci),
+                changeRateValueUnit: (this.Details.MevcutSuIhtiyaci > 0 ? " mm az sulandı" : " mm fazla sulandı") + " (metrekarede)",
+                enableSupportLabelBg: false,
+            }
+
+            let tank = $('.waterTank').analogTank(options);
+            $("#support-label-group").hide();
+            $("#overlay-arrow").hide();
+            $("#behind-arrow").hide();
+            $("#threshold-marker-myEvre").attr('x1', '-150');
+            document.getElementById("body-group").appendChild(this.ParseSVG('<text id="mevcutEvre" text-anchor="end" font-family="Helvetica" font-size="15px" fill="#000" font-weight="bold" transform="translate(-45, ' + $("#threshold-marker-myEvre").attr('y1') + ')">Mevcut Evre</text>'));
+            
+        }
+
+        LoadTimeLine(data) { // calling from GetEvents()
+            //data=data.OrderBy
+            var groupedData = graph.GroupBy(
+                                    data.TaskDetails
+                                        .sort((a, b) =>  new Date(a.start).getTime() - new Date(b.start).getTime())
+                                        .filter(x=>new Date(x.start).getTime() < new Date().getTime()),
+                                        item=>item.start.substring(0, item.start.indexOf('T')));
+            var pendingEvents = data.TaskDetails.filter(x=> new Date(x.start).getTime() > new Date().getTime());
+            if (pendingEvents.length == 0)  pendingEvents = [{ start: '2025-01-01' }]
+            
+
+            var index = 0;
+
+            $(".Timeline").empty();
+            $(".Timeline").css("width", (groupedData.size * 250 + 750) + "px"); // 450 = static htmls
+
+            $('[data-clone="First"]').copy().exec('.Timeline')
+
+            groupedData.forEach((item, i) => {
+
+                var _date = new Date(i);
+                var _spendWater = item.map(x=> x.data.SpendWater).reduce((a, b) => a + b).toLocaleString(undefined, { maximumFractionDigits: 1 });
+              
+                var $elem = $('[data-clone="event' + (index++ % 2 + 1) + 'Bubble"]').copy()
+                                        .setData('Day', _date.getDate())
+                                        .setData('DayName', _date.toLocaleDateString("tr-TR", { month: 'long' }))
+                                        .setData('Month', _date.toLocaleDateString("tr-TR", { weekday: 'long' }))
+                                        .setData('Year', _date.getFullYear())
+                                        .setData('Title', '')
+                                        .setData('hour', '12')
+                                        .setData('minute', '00')
+                                        .attr('data-timelineid',i)
+                                        .exec('.Timeline');
+
+             $('[data-clone="Line"]').copy().exec('.Timeline');
+             $elem.parent().find('.timelineSummary>i').attr('data-original-title'," Bugün "+ _spendWater + " m³ sulama yapıldı");
+
+
+                item.forEach((item2, i2) => {
+                    var start = new Date(item2.start)
+                    var end = new Date(item2.end);
+                    var operatedType = item2.responsedData!=null ? q.getOperatedType(item2.responsedData.OperatedType) : "- ";
+                    var spendWater = item2.responsedData!=null ?  item2.responsedData.SpendWater.toLocaleString("tr-TR", {maximumFractionDigits:1}) : "- ";
+
+                    var tooltipHtml = "<p style='color:white'> Görev : " +item2.title + "<br/>" + " Durum : " + operatedType + "<br/>" + "Harcanan Su : " + spendWater + "m³" + "</p>";
+                    
+                    try {
+                        $('[data-clone="TimeLineElement"]').copy()
+                            .setData('StartMinute', item2.start.split('T')[1].substring(0, 5))
+                            .setData('EndMinute', item2.end.split('T')[1].substring(0, 5))
+                            .setData('Title', item2.title)
+                            .exec($('[data-timelineid="' + i + '"]').find('.eventTitle')).attr('data-original-title', tooltipHtml).attr('data-html', 'true');
+                    } catch (e) {
+                        console.log(e);
+                    }
+                });
+
+            });
+
+
+
+            $('[data-clone="now"]').copy().exec('.Timeline');
+            $('[data-clone="nowLine"]').copy().exec('.Timeline');
+            $('[data-clone="PendingEvents"]').copy().setData('Count', pendingEvents.length)
+                                                    .setData('Day', new Date(pendingEvents[0].start).getDate())
+                                                    .setData('DayName', new Date(pendingEvents[0].start).toLocaleDateString("tr-TR",{ month: 'long' }))
+                                                    .setData('Month', new Date(pendingEvents[0].start).toLocaleDateString("tr-TR", { weekday: 'long' }))
+                                                    .setData('Year', new Date(pendingEvents[0].start).getFullYear())
+                                                    .exec('.Timeline');
+            $('[data-clone="nowEndLine"]').copy().exec('.Timeline');
+            $('[data-clone="dots"]').copy().exec('.Timeline');
+            $(".scrollableDiv").scrollLeft(100000);
+        }
+
+        MoveScroll(rotate, element) {
+
+            var $elem = $(element);
+            var scrollLength = $elem.width() - $elem.parent().width() * 0.25;
+
+            if (rotate == 'left')
+                $elem.stop(true, false).animate({ scrollLeft: $elem.scrollLeft() - scrollLength }, '750', 'swing');
+            else
+                $elem.stop(true, false).animate({ scrollLeft: $elem.scrollLeft() + scrollLength }, '750', 'swing');
+        }
+        // END  FUNC
+
+
+
+
+        // CORE
+        GroupBy(list, keyGetter, groupLevel) {
+            groupLevel = 1;
+
+            const map = new Map();
+            list.forEach((item) => {
+                const key = keyGetter(item);
+                const collection = map.get(key);
+                if (!collection) {
+                    map.set(key, [item]);
+                } else {
+                    collection.push(item);
+                }
+            });
+            return map;
+
+            //Array.from(map).map(x=> { return { key: x[0], values: x[1],groupedLevel:groupLevel } })
+        }
+
+        
+
+        GetDateDiffDay(date1, date2) {
+            var timeDiff = Math.abs(date2.getTime() - date1.getTime());
+            var diffDays = Math.ceil(timeDiff / (1000 * 3600 * 24));
+
+            return diffDays;
+        }
+
+        GetSubEdge(data, index) {
+
+            var copyIndex = JSON.parse(JSON.stringify(index))
+
+            if (data[copyIndex].SulamaIhtiyaci == 0) {
+                return graph.GetSubEdge(data, copyIndex - 1);
+            }
+            return data[copyIndex].SulamaIhtiyaci;
+        }
+
+        ParseSVG(s) {
+            var div = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+            div.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg">' + s + '</svg>';
+            var frag = document.createDocumentFragment();
+            while (div.firstChild.firstChild)
+                frag.appendChild(div.firstChild.firstChild);
+            return frag;
+
+        }
+        // END CORE
+    }
+    var graph = new FieldGraphs();
+    graph.Runner();
+
+</script>

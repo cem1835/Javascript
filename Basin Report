@@ -1,0 +1,699 @@
+
+@{
+    ViewBag.Title = "Havzalar Genel Raporu ";
+    Layout = "~/Views/Shared/_Layout.cshtml";
+
+
+}
+
+<style>
+    .k-i-close, .k-i-all {
+        float: right;
+        margin-right: 10px;
+        margin-top: 5px;
+    }
+
+     .backgroundImageChart{
+         position:relative;
+         z-index:1;
+     }
+
+     .backgroundImageChart:before{
+         background: no-repeat center url(/Content/Custom/img/turkey.png) !important;
+         background-size:cover;
+         z-index:-1;
+         content:"";
+         position:absolute;
+         width:100%;
+         height:100%;
+         opacity:0.4;
+     }
+
+   
+</style>
+
+<script src="~/Content/RB_Basin/GeneralReport/highchartCustom.js"></script>
+<script src="~/Content/Plugins/HighCharts/js/exporting.js"></script>
+<script src="~/Content/RB_Basin/GeneralReport/NoDataHighChart.js"></script>
+
+
+
+<form action="@Url.Action("GeneralReportData","VWRB_Basin",new {area="RB"})" class="form-horizontal clearfix"
+      role="form"
+      method="post"
+      data-filtre="Graphs"
+      data-title="Veriler Yükleniyor.."
+      data-formType="Ajax">
+
+    @Html.AntiForgeryToken()
+    @Html.ValidationSummary(true)
+    @Html.Hidden("inputYears")
+
+    <fieldset>
+        <legend>
+            Filtre
+        </legend>
+
+        <div class="row">
+
+            <div class="col-md-3">
+                <div class="form-group">
+                    <div class="col-md-12">
+                        @(
+                          Html.Akilli()
+                          .DropDownList("DataYonetmelikGrafik")
+                          .OptionLabel("Lütfen Yönetmelik Seçiniz")
+                          .DataValueField("Id")
+                          .DataTextField("enumDescription")//Search Edilecek Kolon İsmi Doğru Yazmassanız patlar
+                          .Action(b => b.Action("GetEnums", "General", new { area = string.Empty }))
+                          .Sort(x => x.Add("enumDescription").Descending())
+                          .Filter<Infoline.CevreSis.BusinessData.SYS_Enums>(a => a.tableName == "RB_Basin" && a.fieldName == "Yonetmelikler")
+                          .Validate(Validations.Required).Value("0")
+                          .Execute("enumKey")
+                        )
+
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3">
+                <div class="form-group">
+                    <div class="col-md-12">
+
+                        @(Html.Kendo().DropDownList().Name("dataItemParameter").
+                    HtmlAttributes(new Dictionary<string, object>()
+                    {
+                        {"style", "width:100%"},
+                        {"class", "form-control"}
+                    }).
+                   OptionLabel("Lütfen Parametre Seçiniz").
+                    DataTextField("Value").
+                    DataValueField("Key").
+                    Filter(FilterType.Contains).
+                    DataSource(source =>
+                    {
+                        source.Read(read =>
+                        {
+                            read.Action("RiverBasinColumn", "VWRB_Basin", new { area = "RB" });
+                        });
+                    })
+
+                    .Validate(Validations.Required))
+
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3">
+                <div class="form-group">
+                    <div class="col-md-12">
+
+                        <div id="years" class="form-control"></div>
+
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3">
+                <div class="form-group">
+                    <div class="col-md-12">
+
+                        <button class="btn btn-md btn-block btn-success" type="submit" style="line-height: 27px">Sorgula</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </fieldset>
+
+
+    <div id="generalDiv" style="display:none"> 
+        <fieldset>
+            <legend>
+                Türkiye Geneli <span id="yearsText"> </span> Yılları Ortalamaları
+            </legend>
+            <div class="row">
+                <div class="col-md-12">
+                    <div id="TotalChart" class="backgroundImageChart"></div>
+                </div>
+            </div>
+        </fieldset>
+
+    </div>
+
+    <fieldset>
+        <legend>
+            Türkiye Geneli Havza Raporu <span id="parameterName"></span>
+        </legend>
+        <div class="row">
+            <div class="col-md-12" >
+
+                <div data-select="info">
+                    <div class="alert alert-warning text-center m-b-none">
+                        <strong>Bilgilendirme!</strong> Yukarıdan seçilen tarih ve parametrelere göre veriler yüklenecektir.
+                    </div>
+                </div>
+
+                <div id="GeneralChart" class="backgroundImageChart"></div>
+            </div>
+        </div>
+    </fieldset>
+
+
+    <fieldset>
+        <legend>
+            Mevsimsel Raporlar
+        </legend>
+
+        <div class="row">
+            <div class="col-md-12">
+
+                <div id="seasonsChart"></div>
+                <div data-select="info">
+                    <div class="alert alert-warning text-center m-b-none">
+                        <strong>Bilgilendirme!</strong> Yukarıdan seçilen tarih ve parametrelere göre veriler yüklenecektir.
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </fieldset>
+
+</form>
+
+
+
+<script>
+
+
+    class Charts {
+
+        constructor() {
+
+            Highcharts.setOptions({
+                global: {
+                    useUTC: false
+                },
+                lang: {
+                    shortMonths: ['Ocak', 'Şub', 'Mart', 'Nis', 'May', 'Haz', 'Tem', 'Eyl', 'Ekim', 'Kas', 'Ara'],
+                    months: ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'],
+                    weekdays: ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'],
+                    downloadJPEG: 'JPEG Olarak Kaydet',
+                    downloadPNG: 'PNG Olarak Kaydet',
+                    downloadSVG: 'SVG Olarak Kaydet',
+                    downloadPDF: 'PDF Olarak Kaydet',
+                    printChart: 'Yazdır',
+                    resetZoom: 'Zoom Kapat',
+                    decimalPoint: ',',
+                    thousandsSep: '.',
+                },
+                tooltip: {
+                    valueDecimals: 2
+                }
+            });
+
+        }
+
+        TotalChart(_dat) {
+
+            var text = "Türkiye Geneli " + $("#dataItemParameter").data("kendoDropDownList").text() + '  Parametresi Havza Raporu';
+
+                Highcharts.chart('TotalChart', {
+
+                    chart: {
+                        type: 'column',
+                        backgroundColor: 'rgba(0,0,0,0)',
+                    },
+                    title: {
+                        text: text
+                    },
+                    subtitle: {
+                        text:  $("#DataYonetmelikGrafik").data("kendoDropDownList").text() + " Baz Alınmıştır"
+                    },
+                    xAxis: {
+                        categories: ['Havza'],
+                        title: {
+                            text: _dat.LimitText 
+                        }
+                    },
+                    exporting: {
+                        filename: $("#years").data("kendoMultiSelect").value().sort().join(",") + " - " + $("#DataYonetmelikGrafik").data("kendoDropDownList").text() + " - " + text
+                    },
+                    tooltip: {
+                        formatter: function () {
+
+                            var tooltip = '<b> ' + this.x + ' </b> <br/>';
+                            tooltip += '<span style="color:{point.color}">\u25CF</span>';
+                            tooltip += this.series.name + ' <b>' + this.point.y.toLocaleString('tr-TR') + ' ' + _dat.Limits.Unit + ' </b>';
+                            return tooltip;
+                        },
+                    },
+                    yAxis: {
+                        title: {
+                            text: 'Ölçüm Değerleri'
+                        },
+                        plotLines: _dat.PlotLines,
+                        plotBands: _dat.PlotBands,
+                        labels: {
+                            formatter: function () {
+                                return this.value.toLocaleString() + " " + _dat.Limits.Unit;
+                            }
+                        }
+                    },
+                    lang: {
+                        noData: "Gösterilecek Veri Yok"
+                    },
+                    plotOptions: {
+                        series: {
+                            minPointLength: 5
+                        }
+                    },
+                    credits: {
+                        enabled: false
+                    },
+                    series: _dat.TotalSerie.sort((a, b) => parseInt(a.name.split(' ')[0]) - parseInt(b.name.split(' ')[0]))
+
+                });
+        
+        }
+
+        GeneralChart(_dat) {
+
+            var text = "Türkiye Geneli " + $("#dataItemParameter").data("kendoDropDownList").text() + '  Parametresi  Yıllara Göre Havza Raporu';
+
+            Highcharts.chart('GeneralChart', {
+
+                chart: {
+                    type: 'column',
+                    backgroundColor: 'rgba(0,0,0,0)',
+                },
+                exporting: {
+                    filename: $("#years").data("kendoMultiSelect").value().sort().join(",") + " - " + $("#DataYonetmelikGrafik").data("kendoDropDownList").text() + " - " + text
+                },
+                title: {
+                    text: text
+                },
+                subtitle:{
+                    text: $("#DataYonetmelikGrafik").data("kendoDropDownList").text() +" Baz Alınmıştır"
+                },
+                xAxis: {
+                    categories: _dat.data.map(x=>x.BasinId).sort(),
+                    title: {
+                        text:  _dat.LimitText
+                    },
+                },
+                tooltip: {
+                    formatter: function () {
+
+                        var tooltip = '<b> ' + this.x + ' </b> <br/>';
+                        tooltip += '<span style="color:{point.color}">\u25CF</span>';
+                        tooltip += this.series.name + ' <b>' + this.point.y.toLocaleString('tr-TR') + ' ' + _dat.Limits.Unit + ' </b>';
+                        return tooltip
+                    },
+                },
+                lang: {
+                    noData: "Gösterilecek Veri Yok"
+                },
+                yAxis: {
+                    title: {
+                        text: 'Ölçüm Değerleri'
+                    },
+                    plotLines: _dat.PlotLines,
+                    plotBands: _dat.PlotBands,
+                    labels: {
+                        formatter: function () {
+                            return this.value.toLocaleString() + " " + _dat.Limits.Unit;
+                        }
+                    }
+                },
+                plotOptions: {
+                    series: {
+                        minPointLength: 5
+                    }
+                },
+                credits: {
+                    enabled: false
+                },
+                series: _dat.generalSerie.sort((a, b) => parseInt(a.name.split(' ')[0]) - parseInt(b.name.split(' ')[0]))
+
+            });
+        }
+
+        SeasonCharts(_dat) {
+
+            _dat.seasonSeries.forEach((chart) => {
+
+                var id = "seasonChart_" + chart[0].name.split(' ')[0];
+
+                var text = chart[0].name.split(' ')[0] + ' Yılı ' + $("#dataItemParameter").data("kendoDropDownList").text() + '  Parametresi Mevsim Raporu';
+
+                $("#seasonsChart").append('<fieldset><legend> ' + chart[0].name.split(' ')[0] + '  Mevsimsel Raporu </legend> <div id="' + id + '" class="backgroundImageChart"> </div> </fieldset>');
+
+                Highcharts.chart(id, {
+
+                    chart: {
+                        type: 'column',
+                        backgroundColor: 'rgba(0,0,0,0)',
+                    },
+                    title: {
+                        text: text
+                    },
+                    exporting: {
+                        filename: $("#DataYonetmelikGrafik").data("kendoDropDownList").text() + " - " + text
+                    },
+                    subtitle: {
+                        text: $("#DataYonetmelikGrafik").data("kendoDropDownList").text() + " Baz Alınmıştır"
+                    },
+                    xAxis: {
+                        categories: _dat.data.map(x=>x.BasinId).sort(),
+                        title: {
+                            text: _dat.LimitText
+                        },
+                    },
+                    lang: {
+                        noData: "Gösterilecek Veri Yok"
+                    },
+                    tooltip: {
+                        formatter: function () {
+
+                            var tooltip = '<b> ' + this.x + ' </b> <br/>';
+                            tooltip += '<span style="color:{point.color}">\u25CF</span>';
+                            tooltip +=  this.series.name + ' <b>' + this.point.y.toLocaleString('tr-TR') + ' ' + _dat.Limits.Unit + ' </b>';
+                            return tooltip
+                        },
+                    },
+                    yAxis: {
+                        title: {
+                            text: 'Ölçüm Değerleri'
+                        },
+                        plotLines: _dat.PlotLines,
+                        plotBands: _dat.PlotBands,
+                   
+                        labels: {
+                            formatter: function () {
+                                return this.value.toLocaleString() + " " + _dat.Limits.Unit;
+                            }
+                        }
+                    },
+                    plotOptions: {
+                        series: {
+                            minPointLength: 5
+                        }
+                    },
+                    credits: {
+                        enabled: false
+                    },
+                    series: chart
+
+                });
+            })
+
+
+        }
+
+        Draw(_dat) {
+
+            __charts.GeneralChart(_dat);
+            $("#parameterName").html(" ("+$("#dataItemParameter").data("kendoDropDownList").text() + " Parametresi)")
+
+
+            $("#seasonsChart").empty(); __charts.SeasonCharts(_dat);
+
+
+            if ($("#years").data("kendoMultiSelect").value().length > 1) {
+                $("#yearsText").html($("#years").data("kendoMultiSelect").value().sort( (a,b) => a-b).join(','));
+                __charts.TotalChart(_dat);
+                $("#generalDiv").show();
+            }
+            else 
+                $("#generalDiv").hide();
+        }
+
+    }
+    var __charts = new Charts();
+
+
+    class Data {
+
+        constructor() {
+            this.years = this.GetYears();
+            this.Basins = $.ajax({ url: '/RB/VWRB_Basin/GetBasins', type: 'POST', dataType: 'JSON', async: false }).responseJSON;
+        }
+
+        GetYears() {
+            var years = [];
+            var a = 0;
+            while (a < 10) {
+                years.push({ Key: new Date().getFullYear() - a, Value: new Date().getFullYear() - a });
+                a++
+            }
+            return years;
+        }
+
+        ProcessData(resp, $years) {
+
+            resp["TotalSerie"] = resp.data.GroupBy(x=>x.BasinId)
+                .map(x=> {
+                    return {
+                        name: __data.Basins.filter(t=>t.id == x.key)[0].Name,
+                        data: [x.values.map(y=>y.Col).reduce((a, b) => Math.abs(a) + Math.abs(b)) / x.values.map(y=>y.Col).length]
+                    }
+                });
+
+            resp.data = resp.data // data formatter
+                .map(x=> { x.MeasurementDate = new Date().FromJson(x.MeasurementDate); return x; })
+                  .GroupBy(x=>x.BasinId)
+                     .map(x=> {
+                         return {
+                             BasinId: __data.Basins.filter(z=>z.id == x.key)[0].Name,
+                             Values: GroupSeason(x.values, $years, resp.seasons)
+                         }
+                     }).sort((a, b) => a.BasinId - a.BasinId);
+
+
+            resp["generalSerie"] = $years.map(year=> {
+                return {
+                    name: year + " Yılı ",
+                    data: resp.data.map(x=>x.BasinId).sort().map(category => {
+
+                        var columnData = resp.data.
+                            filter(x=>  x.BasinId == category)[0].Values.
+                            filter(h=> h.key == year)[0];
+
+                        if (columnData == undefined || columnData.values == undefined || columnData.values.length == 0)
+                            return null;
+
+                        columnData = columnData.values.map(h=>h.Col);
+
+
+
+                        return columnData.reduce((a, b) => Math.abs(a) + Math.abs(b)) / (columnData.filter(j=> j != null).length) // refactor bakkkk
+                    })
+                }
+            });
+
+
+            resp["PlotLines"] = [
+                       {
+                           color: '#ffff00',
+                           dashStyle: 'shortdash',
+                           value: resp.Limits.Max,
+                           zIndex: 4,
+                           width: 1,
+                           label: {
+                               text: (resp.Limits.Limit2 == resp.Limits.Max ? '' : 'IV. Seviye '),
+                               verticalAlign: 'bottom',
+                           }
+                       },
+
+                    {
+                        color: '#ffff00',
+                        dashStyle: 'shortdash',
+                        value: resp.Limits.Max,
+                        zIndex: 4,
+                        width: 3,
+                        label: {
+                            text: (resp.Limits.Limit2 == resp.Limits.Max ? '' : 'III. Seviye '),
+                            verticalAlign: 'bottom',
+                            y: 10
+                        }
+                    },
+                    {
+                        color: 'green',
+                        dashStyle: 'shortdash',
+                        value: resp.Limits.Limit2,
+                        zIndex: 4,
+                        width: 2,
+                        label: {
+                            text: (resp.Limits.Limit1 == resp.Limits.Limit2 ? '' : 'II. Seviye '),
+                            y:10
+                        }
+                    },
+                    {
+                        color: 'blue',
+                        dashStyle: 'shortdash',
+                        value: resp.Limits.Limit1,
+                        zIndex:4,
+                        width: 2,
+                        label: {
+                            text: 'I. Seviye',
+                            color: 'black',
+                            verticalAlign: 'bottom',
+                            textAlign: 'bottom',
+                            y: 10
+                        }
+                    }];
+
+            resp["PlotBands"] = [{
+                color: 'rgba(255,0,0,0.07)',
+                from: resp.Limits.Max,
+                to :resp.Limits.Max*250
+            }];
+
+            resp["seasonSeries"] = $years.sort( (a,b) => b-a).map(year=> {
+
+                resp["LimitText"] =   '<b> I. Seviye :  </b>' + '0' + ' - ' + resp.Limits.Limit1 + ' ' + resp.Limits.Unit  + ' || '+
+                                      '<b>  II. Seviye: </b>' + resp.Limits.Limit1 + ' - ' + resp.Limits.Limit2 + ' ' + resp.Limits.Unit + ' <br/> ' +
+                                     ' <b> III. Seviye: </b>' + resp.Limits.Limit2 + ' - ' + resp.Limits.Max + ' ' + resp.Limits.Unit + ' || '+
+                                     ' <b> IV. Seviye : </b>' + resp.Limits.Limit1 + ' ' + resp.Limits.Unit + ' Üzeri ';
+  
+
+                function SeasonDataCalculator(key) {
+
+                    return resp.data.map(x=>x.BasinId).sort().map(x=> {
+
+                        var basinData = resp.data.filter(y=>y.BasinId == x);
+
+                        if (basinData[0] == null || basinData[0] == undefined || basinData[0].Values == undefined)
+                            return null;
+
+                        var seasonsData = basinData[0].Values.filter(y=>y.key == year)[0].seasons.filter(y=>y.name.indexOf(key) > -1)[0];
+
+                        if (seasonsData == undefined || seasonsData.value.length == 0)
+                            return null;
+
+                        seasonsData = seasonsData.value.map(y=>y.Col);
+
+                        var result = seasonsData.reduce((a, b) => Math.abs(a) + Math.abs(b)) / seasonsData.filter(x=>x != null).length;
+
+                        return result;
+                    });
+                }
+
+                return [
+                         { name: year + " İlkBahar", data: SeasonDataCalculator("İlkBahar") },
+                         { name: year + " Yaz", data: SeasonDataCalculator("Yaz") },
+                         { name: year + " SonBahar", data: SeasonDataCalculator("Son Bahar") },
+                         { name: year + " Kış", data: SeasonDataCalculator("Kış") },
+                ];
+            });
+
+            
+
+            if (resp.data.length != 0)
+                resp.data = resp.data.sort((a, b) => a.name - b.name);
+
+            return resp;
+        }
+
+    }
+    var __data = new Data();
+
+
+</script>
+
+
+<script>
+    // events And JQuery
+
+    function onYearsChange() {
+
+        $("#inputYears").val(JSON.stringify($("#years").data("kendoMultiSelect").value()));
+
+        const val=$("#inputYears").val();
+
+        if (val.length == 0 || val == "[]") {
+            $('[type="submit"]').attr('disabled', true)
+        }
+        else {
+            $('[type="submit"]').attr('disabled', false)
+        }
+     
+
+    }
+
+    $(document).on('ready', function () {
+
+        $("#years").kendoMultiSelect({
+            autoClose: false,
+            dataTextField: "Key",
+            placeholder: 'Lütfen Yılları Seçiniz..',
+            dataValueField: "Value",
+            dataSource: __data.years,
+            change: onYearsChange,
+            index: 0,
+        });
+        
+        onYearsChange();
+    })
+        .on('success', '[data-filtre="Graphs"]', function (e, resp) {
+
+            $('[data-select="info"]').hide();
+
+
+            __charts.Draw(
+                 __data.ProcessData(resp, $("#years").data("kendoMultiSelect").value())
+                );
+        });
+
+</script>
+
+
+<script>
+    // helper
+
+    GroupSeason = function (Values, $years, Seasons) {
+
+        var result = [];
+
+        $years.forEach((year) => {
+
+            var yearSeasons = Seasons.reduce((a, b) =>  a.concat(b)).filter(x=>x.year == year && x.name.length > 0);
+
+            result.push(
+                {
+                    key: year,
+                    values: Values.filter(y=>  y.MeasurementDate >= new Date(year, 2, 21) && new Date(year + 1, 2, 20) >= y.MeasurementDate),
+
+                    seasons: yearSeasons.map(x=> {
+                        return {
+                            name: x.year + " " + x.name,
+                            value: Values.filter(g=> g.MeasurementDate >= new Date().FromJson(x.startDate) && new Date().FromJson(x.endDate) >= g.MeasurementDate)
+                        }
+                    })
+                });
+        });
+        return result;
+    }
+
+    Array.prototype.GroupBy = function (keyGetter, groupLevel) {
+
+        var objectKeys = Object.keys(this).join(',');
+
+        if (groupLevel == undefined) groupLevel = 1; // group Level 1
+
+        return Array.from(GroupMapper(this)).map(x=> { return { key: x[0], values: x[1], groupLevel: groupLevel } }).filter(x=> !(x.key == "" || x.key == null));
+
+        function GroupMapper(Data) {
+            const map = new Map();
+            Data.forEach((item) => {
+                const key = keyGetter(item);
+                const collection = map.get(key);
+
+                !collection ? map.set(key, [item]) : collection.push(item);
+            });
+            return map;
+        }
+    }
+
+</script>
